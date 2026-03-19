@@ -1,12 +1,14 @@
 #pragma once
-#include "queue.h"
+#include <queue>
+#include <string>
 #include <thread>
+#include <mutex>
+#include <condition_variable>
 #include <fstream>
-#include <atomic>
 
 class Logger {
 public:
-    Logger(const std::string& filename, size_t queue_size = 1024);
+    Logger(const std::string& filename);
     ~Logger();
 
     void log(const std::string& msg);
@@ -14,9 +16,13 @@ public:
 private:
     void worker();
 
-    MPMCQueue<std::string> queue;
+    std::queue<std::string> q;
+
+    std::mutex mtx;
+    std::condition_variable cv;
+
+    bool done = false;
+
     std::thread worker_thread;
     std::ofstream file;
-
-    std::atomic<bool> running;
 };

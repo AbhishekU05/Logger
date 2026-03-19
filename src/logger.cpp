@@ -1,37 +1,45 @@
 #include "logger.h"
-#include <iostream>
 
-Logger::Logger(const std::string& filename, size_t qsize)
-    : queue(qsize), file(filename), running(true) {
+Logger::Logger(const std::string& filename) : file(filename) {
     worker_thread = std::thread(&Logger::worker, this);
 }
 
-Logger::~Logger() {
-    running.store(false);
-    if (worker_thread.joinable()) {
-        worker_thread.join();
-    }
-}
-
 void Logger::log(const std::string& msg) {
-    // DROP if full (important design decision)
-    queue.push(msg);
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        q.push(msg);
+    }
+    cv.notify_one();
 }
 
 void Logger::worker() {
-    while (running.load()) {
-        auto item = queue.pop();
-        if (item) {
-            file << *item << "\n";
-        }
-    }
-
-    // flush remaining
     while (true) {
-        auto item = queue.pop();
-        if (!item) break;
-        file << *item << "\n";
+        std::unique_lock<std::mutex> lock(mtx);
+
+        cv.wait(lock, [&]() {
+            return !q.empty() || done;
+        });
+
+        while (!q.empty()) {
+            std::string msg = q.front();
+            q.pop();
+
+            lock.unlock();              // don't hold lock during I/O
+            file << msg << "\n";
+            lock.lock();
+        }
+
+        if (done) break;
     }
 
     file.flush();
+}
+
+Logger::~Logger() {
+    {
+        std::lock_guard<std::mutex> lock(mtx);
+        done = true;
+    }
+    cv.notify_one();
+    worker_thread.join();
 }
