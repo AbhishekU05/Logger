@@ -27,7 +27,9 @@ void Logger::worker(int shard_id) {
     while (true) {
         {
             std::unique_lock<std::mutex> lock(shard.mtx);
-            shard.cv.wait(lock, [&]() { return !shard.q.empty() || done; });
+            shard.cv.wait(lock, [&]() { 
+                return !shard.q.empty() || done.load(); 
+            });
 
             while (!shard.q.empty()) {
                 batch.push_back(std::move(shard.q.front()));
@@ -40,11 +42,19 @@ void Logger::worker(int shard_id) {
             for (auto& msg : batch)
                 file << msg << "\n";
         }
-        printf("shard %d batch size: %zu\n", shard_id, batch.size());
 
         batch.clear();
 
-        if (done) break;
+        if (done) {
+            // drain anything left after done was set
+            std::unique_lock<std::mutex> lock(shard.mtx);
+            while (!shard.q.empty()) {
+                std::lock_guard<std::mutex> file_lock(file_mtx);
+                file << shard.q.front() << "\n";
+                shard.q.pop();
+            }
+            break;
+        }
     }
 }
 
