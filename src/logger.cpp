@@ -1,45 +1,58 @@
 #include "logger.h"
 
-Logger::Logger(const std::string& filename) : file(filename) {
-    worker_thread = std::thread(&Logger::worker, this);
+Logger::Logger(const std::string& filename, int num_shards)
+    : num_shards(num_shards), file(filename) {
+    for (int i = 0; i < num_shards; i++)
+        shards.push_back(std::make_unique<Shard>());
+
+    for (int i = 0; i < num_shards; i++)
+        worker_threads.emplace_back(&Logger::worker, this, i);
 }
 
-void Logger::log(const std::string& msg) {
+void Logger::log(std::string msg) {
+    int idx = next_shard.fetch_add(1) % num_shards;
+    Shard& shard = *shards[idx];
     {
-        std::lock_guard<std::mutex> lock(mtx);
-        q.push(msg);
+        std::lock_guard<std::mutex> lock(shard.mtx);
+        shard.q.push(std::move(msg));
     }
-    cv.notify_one();
+    shard.cv.notify_one();
 }
 
-void Logger::worker() {
+void Logger::worker(int shard_id) {
+    Shard& shard = *shards[shard_id];
+    std::vector<std::string> batch;
+    batch.reserve(1024);
+
     while (true) {
-        std::unique_lock<std::mutex> lock(mtx);
+        {
+            std::unique_lock<std::mutex> lock(shard.mtx);
+            shard.cv.wait(lock, [&]() { return !shard.q.empty() || done; });
 
-        cv.wait(lock, [&]() {
-            return !q.empty() || done;
-        });
-
-        while (!q.empty()) {
-            std::string msg = q.front();
-            q.pop();
-
-            lock.unlock();              // don't hold lock during I/O
-            file << msg << "\n";
-            lock.lock();
+            while (!shard.q.empty()) {
+                batch.push_back(std::move(shard.q.front()));
+                shard.q.pop();
+            }
         }
+
+        {
+            std::lock_guard<std::mutex> file_lock(file_mtx);
+            for (auto& msg : batch)
+                file << msg << "\n";
+        }
+        printf("shard %d batch size: %zu\n", shard_id, batch.size());
+
+        batch.clear();
 
         if (done) break;
     }
-
-    file.flush();
 }
 
 Logger::~Logger() {
-    {
-        std::lock_guard<std::mutex> lock(mtx);
-        done = true;
-    }
-    cv.notify_one();
-    worker_thread.join();
+    done = true;
+    for (auto& shard : shards)
+        shard->cv.notify_one();
+    for (auto& t : worker_threads)
+        t.join();
+    file.flush();
 }

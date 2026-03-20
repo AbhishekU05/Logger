@@ -5,24 +5,31 @@
 #include <mutex>
 #include <condition_variable>
 #include <fstream>
+#include <vector>
+#include <atomic>
 
 class Logger {
 public:
-    Logger(const std::string& filename);
+    Logger(const std::string& filename, int num_shards = 8);
     ~Logger();
-
-    void log(const std::string& msg);
+    void log(std::string msg);
 
 private:
-    void worker();
+    void worker(int shard_id);
 
-    std::queue<std::string> q;
+    struct Shard {
+        std::queue<std::string> q;
+        std::mutex mtx;
+        std::condition_variable cv;
+    };
 
-    std::mutex mtx;
-    std::condition_variable cv;
+    std::vector<std::unique_ptr<Shard>> shards;
+    int num_shards;
+    std::atomic<int> next_shard = 0;
+    std::atomic<bool> done = false;
 
-    bool done = false;
-
-    std::thread worker_thread;
+    std::mutex file_mtx;
     std::ofstream file;
+
+    std::vector<std::thread> worker_threads;
 };
