@@ -11,7 +11,7 @@
 
 class Logger {
 public:
-    Logger(const std::string& filename, size_t queue_capacity = 1024 * 256);
+    Logger(const std::string& filename, size_t queue_capacity = 1024 * 256 * 2);
     ~Logger();
     bool log(std::string msg);
 
