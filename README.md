@@ -141,14 +141,3 @@ cmake .. -DUSE_LOCKFREE=ON && make
 │   └── queue.cpp
 └── CMakeLists.txt
 ```
-
----
-
-## Further Reading
-
-- *Systems Performance* — Brendan Gregg
-- *The Art of Multiprocessor Programming* — Herlihy & Shavit
-- "How NOT to Measure Latency" — Gil Tene (YouTube)
-- "Lock-Free Programming" — Fedor Pikus (YouTube)
-- "The Disruptor" — Trisha Gee (YouTube)
-- spdlog source code — production C++ logger solving the same problems
