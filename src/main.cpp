@@ -18,17 +18,19 @@ int main(int argc, char* argv[]) {
 
     Logger logger("out.log");
 
-    int N = 8;
+    int N = 7;
     int K = 100000;
     double base_lambda = 10000.0;
 
     std::vector<std::thread> generators;
     std::vector<std::vector<long>> latencies(N);
+    std::vector<std::vector<long>> build_latencies(N);
 
-    for (int i = 0; i < N; i++)
+    for (int i = 0; i < N; i++) {
         latencies[i].reserve(K);
+        build_latencies[i].reserve(K);
+    }
 
-    // sample per-generator lambdas
     std::mt19937 main_rng(42);
     std::normal_distribution<double> lambda_dist(base_lambda, base_lambda * 0.2);
     std::vector<double> lambdas(N);
@@ -38,9 +40,8 @@ int main(int argc, char* argv[]) {
     printf("Mode       : %s\n", stress ? "STRESS (no sleep)" : "NORMAL (exponential inter-arrival)");
     printf("Generators : %d\n", N);
     printf("Events each: %d\n", K);
-    if (!stress) {
+    if (!stress)
         printf("Base lambda: %.0f logs/sec\n", base_lambda);
-    }
     printf("\n");
 
     auto start = std::chrono::steady_clock::now();
@@ -58,18 +59,26 @@ int main(int argc, char* argv[]) {
                 }
 
                 auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-                std::string msg = "[gen " + std::to_string(i) +
-                                  "] [lambda " + std::to_string((int)lambdas[i]) +
-                                  "] [t=" + std::to_string(now) +
-                                  "] event " + std::to_string(k);
+
+                auto t_build_start = std::chrono::steady_clock::now();
+                char buf[256];
+                snprintf(buf, sizeof(buf), "[gen %d] [lambda %d] [t=%ld] event %d",
+                         i, (int)lambdas[i], now, k);
+                auto t_build_end = std::chrono::steady_clock::now();
 
                 auto t0 = std::chrono::steady_clock::now();
-                logger.log(std::move(msg));
+                bool accepted = logger.log(buf);
                 auto t1 = std::chrono::steady_clock::now();
 
-                latencies[i].push_back(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()
+                build_latencies[i].push_back(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(t_build_end - t_build_start).count()
                 );
+
+                if (accepted) {
+                    latencies[i].push_back(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(t1 - t0).count()
+                    );
+                }
             }
         });
     }
@@ -80,38 +89,57 @@ int main(int argc, char* argv[]) {
     double elapsed = std::chrono::duration<double>(end - start).count();
     long total = N * K;
 
-    std::vector<long> all;
-    all.reserve(total);
+    // flatten latencies
+    std::vector<long> all_log, all_build;
     for (auto& v : latencies)
         for (auto x : v)
-            all.push_back(x);
+            all_log.push_back(x);
+    for (auto& v : build_latencies)
+        for (auto x : v)
+            all_build.push_back(x);
 
-    std::sort(all.begin(), all.end());
+    std::sort(all_log.begin(), all_log.end());
+    std::sort(all_build.begin(), all_build.end());
 
-    auto percentile = [&](double p) {
-        return all[static_cast<size_t>(p / 100.0 * all.size())];
+    auto percentile = [](std::vector<long>& v, double p) {
+        return v[static_cast<size_t>(p / 100.0 * v.size())];
     };
 
     printf("--- Per Generator ---\n");
     for (int i = 0; i < N; i++) {
         auto& v = latencies[i];
         std::sort(v.begin(), v.end());
-        printf("gen %d  lambda=%-8.0f  p50=%ld ns  p99=%ld ns\n",
-            i,
-            lambdas[i],
+        long drops = K - (long)v.size();
+        printf("gen %d  lambda=%-8.0f  p50=%ld ns  p99=%ld ns  drops=%ld\n",
+            i, lambdas[i],
             v[v.size() * 50 / 100],
-            v[v.size() * 99 / 100]
+            v[v.size() * 99 / 100],
+            drops
         );
     }
+
+    long total_accepted = 0;
+    for (auto& v : latencies)
+        total_accepted += v.size();
+
 
     printf("\n--- Overall ---\n");
     printf("Total logs : %ld\n", total);
     printf("Elapsed    : %.3f sec\n", elapsed);
-    printf("Throughput : %.0f logs/sec\n", total / elapsed);
-    printf("Latency p50: %ld ns\n", percentile(50));
-    printf("Latency p99: %ld ns\n", percentile(99));
-    printf("Latency p999: %ld ns\n", percentile(99.9));
-    printf("Latency max: %ld ns\n", all.back());
+    printf("Throughput (attempted) : %.0f logs/sec\n", (N * K) / elapsed);
+    printf("Throughput (accepted)  : %.0f logs/sec\n", total_accepted / elapsed);
+    printf("\n");
+    printf("--- log() latency ---\n");
+    printf("p50  : %ld ns\n", percentile(all_log, 50));
+    printf("p99  : %ld ns\n", percentile(all_log, 99));
+    printf("p999 : %ld ns\n", percentile(all_log, 99.9));
+    printf("max  : %ld ns\n", all_log.back());
+    printf("\n");
+    printf("--- string build latency ---\n");
+    printf("p50  : %ld ns\n", percentile(all_build, 50));
+    printf("p99  : %ld ns\n", percentile(all_build, 99));
+    printf("p999 : %ld ns\n", percentile(all_build, 99.9));
+    printf("max  : %ld ns\n", all_build.back());
 
     return 0;
 }
