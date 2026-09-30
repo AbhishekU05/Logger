@@ -9,7 +9,7 @@ Two implementations of the same logger interface, benchmarked against each other
 - **Mutex logger** — `std::queue` + `std::mutex` + `std::condition_variable` + `ofstream`
 - **Lock-free logger** — custom MPMC queue + atomic operations + raw `write()` syscall + `sched_yield`
 
-Same benchmark, same interface, honest numbers.
+Same benchmark, same interface, honest numbers. 
 
 ---
 
