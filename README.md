@@ -10,7 +10,7 @@ Two implementations of the same logger interface, benchmarked against each other
 - **Lock-free logger** — custom MPMC queue + atomic operations + raw `write()` syscall + `sched_yield`
 
 Same benchmark, same interface, honest numbers.  
-
+ 
 ---
 
 ## Results
